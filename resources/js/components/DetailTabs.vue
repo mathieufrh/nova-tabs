@@ -1,89 +1,240 @@
 <template>
-  <div :class="darkModeClass">
-    <div class="tab-group">
-      <slot>
-        <Heading :level="1" v-text="panel.name" v-if="panel.showTitle"/>
-
-        <p
-            v-if="panel.helpText"
-            :class="panel.helpText ? 'tabs-mt-2' : 'tabs-mt-3'"
-            class="tabs-text-gray-500 tabs-text-sm tabs-font-semibold tabs-italic"
-            v-html="panel.helpText"
-        ></p>
-      </slot>
-
-      <div class="tab-card"
-           :class="[
-          panel.showTitle && !panel.showToolbar ? 'tabs-mt-3' : ''
-        ]"
-      >
-        <div id="tabs">
-          <div class="block">
-            <nav
-                aria-label="Tabs"
-                class="tab-menu"
+    <div>
+        <slot>
+            <h4
+                v-if="panel.showTitle"
+                class="text-90 font-normal text-2xl mb-3"
             >
-              <a
-                  v-for="(tab, key) in getSortedTabs(tabs)"
-                  :key="key"
-                  :dusk="tab.slug + '-tab'"
-                  :class="getIsTabCurrent(tab) ? 'active tabs-text-' + getCurrentColor() + '-500 tabs-font-bold tabs-border-b-2 tabs-border-b-' + getCurrentColor() + '-500' : 'tabs-text-gray-600 hover:tabs-text-gray-800 dark:tabs-text-gray-400 hover:dark:tabs-text-gray-200'"
-                  class="tab-item border-gray-200"
-                  @click.prevent="handleTabClick(tab)"
-              >
-                <span class="capitalize">{{ tab.properties.title }}</span>
-              </a>
-            </nav>
-          </div>
+                {{ panel.name }}
+            </h4>
+        </slot>
+        <div class="relationship-tabs-panel card">
+            <div class="tabs-wrap border-b-2 border-40 w-full">
+                <div class="tabs flex flex-row overflow-x-auto">
+                    <button
+                        class="py-5 px-8 border-b-2 focus:outline-none tab"
+                        :class="getTabClass(tab)"
+                        v-for="(tab, key) in tabs"
+                        :key="key"
+                        :dusk="tab.slug + '-tab'"
+                        @click="handleTabClick(tab)"
+                    >
+                        <tab-title :tab="tab" />
+                    </button>
+                </div>
+            </div>
+            <div
+                :class="[
+                    panel && panel.defaultSearch
+                        ? 'default-search'
+                        : 'tab-content',
+                    tab.slug,
+                ]"
+                :ref="getTabRefName(tab)"
+                v-for="(tab, index) in tabs"
+                v-show="tab.slug === activeTab"
+                :label="tab.name"
+                :key="'related-tabs-fields' + index"
+            >
+                <div v-if="tab.init" :class="getBodyClass(tab)">
+                    <component
+                        v-for="(field, index) in tab.fields"
+                        :class="{
+                            'remove-bottom-border':
+                                index === tab.fields.length - 1,
+                        }"
+                        :key="'tab-' + index"
+                        :is="componentName(field)"
+                        :resource-name="resourceName"
+                        :resource-id="resourceId"
+                        :resource="resource"
+                        :field="field"
+                        @actionExecuted="actionExecuted"
+                    />
+                </div>
+            </div>
         </div>
-
-        <div
-            v-for="(tab, index) in getSortedTabs(tabs)"
-            :key="'related-tabs-fields' + index"
-            :ref="getTabRefName(tab)"
-            :class="[
-                        'tab',
-                        tab.slug,
-                        tab.classes
-                    ]"
-            :label="tab.name"
-            v-show="getIsTabCurrent(tab)"
-        >
-          <div :class="getBodyClass(tab)">
-            <KeepAlive v-for="(field, index) in tab.fields" :key="index">
-              <component
-                  :is="getComponentName(field)"
-                  :class="{'remove-bottom-border': index === tab.fields.length - 1}"
-                  :field="field"
-                  :index="index"
-                  :resource="resource"
-                  :resource-id="resourceId"
-                  :resource-name="resourceName"
-                  @actionExecuted="actionExecuted"
-              />
-            </KeepAlive>
-          </div>
-        </div>
-      </div>
     </div>
-  </div>
 </template>
 
 <script>
-import BehavesAsPanel from '../../../vendor/laravel/nova/resources/js/mixins/BehavesAsPanel';
-import HasTabs from "../mixins/HasTabs";
-
-import Heading from '../../../vendor/laravel/nova/resources/js/components/Heading.vue';
-import Card from '../../../vendor/laravel/nova/resources/js/components/Card.vue';
+import BehavesAsPanel from "laravel-nova/src/mixins/BehavesAsPanel";
+import TabTitle from "./TabTitle";
+import { changeActiveTab } from "@/util/tab-updater";
 
 export default {
-  mixins: [BehavesAsPanel, HasTabs],
-  components: {Card, Heading},
-  props: {
-    mode: {
-      type: String,
-      default: 'detail',
+    components: { TabTitle },
+    mixins: [BehavesAsPanel],
+    data() {
+        return {
+            tabs: null,
+            activeTab: "",
+        };
     },
-  }
+    mounted() {
+        const tabs = (this.tabs = this.panel.fields.reduce((tabs, field) => {
+            if (!(field.tabSlug in tabs)) {
+                tabs[field.tabSlug] = {
+                    name: field.tab,
+                    slug: field.tabSlug,
+                    init: false,
+                    listable: field.listableTab,
+                    fields: [],
+                    properties: field.tabInfo,
+                };
+            }
+
+            tabs[field.tabSlug].fields.push(field);
+
+            return tabs;
+        }, {}));
+
+        if (
+            this.$route.query.tab !== undefined &&
+            tabs[this.$route.query.tab] !== undefined
+        ) {
+            this.handleTabClick(tabs[this.$route.query.tab]);
+        } else if (this.panel.selectFirstTab) {
+            this.handleTabClick(tabs[Object.keys(tabs)[0]], false);
+        }
+    },
+    methods: {
+        /**
+         * Handle the actionExecuted event and pass it up the chain.
+         */
+        actionExecuted() {
+            this.$emit("actionExecuted");
+        },
+        handleTabClick(tab, updateUri = true) {
+            const currentTab = this.$router.currentRoute.query;
+
+            tab.init = true;
+            this.activeTab = tab.slug;
+
+            if (updateUri && (!currentTab || currentTab.tab !== tab.slug)) {
+                changeActiveTab(this.$router, tab.slug);
+            }
+        },
+        componentName(field) {
+            return field.prefixComponent
+                ? "detail-" + field.component
+                : field.component;
+        },
+        getTabClass(tab) {
+            const classes = [];
+
+            if (this.activeTab === tab.slug) {
+                classes.push("text-grey-black font-bold border-primary");
+            } else {
+                classes.push("text-grey font-semibold border-40");
+            }
+
+            return classes.concat(tab.properties.tabClass);
+        },
+        getBodyClass(tab) {
+            const classes = [];
+
+            if (!tab.listable) {
+                classes.push("px-6 py-3");
+            }
+
+            return classes.concat(tab.properties.bodyClass);
+        },
+        getTabRefName(tab) {
+            return `tab-${tab.slug}`;
+        },
+    },
 };
 </script>
+
+<style lang="scss">
+.relationship-tabs-panel {
+    .has-search-bar {
+    }
+
+    .tabs::-webkit-scrollbar {
+        height: 8px;
+        border-radius: 4px;
+    }
+
+    .tabs::-webkit-scrollbar-thumb {
+        background: #cacaca;
+    }
+
+    .tabs {
+        white-space: nowrap;
+        margin-bottom: -2px;
+    }
+
+    .tab-content {
+        .card {
+            box-shadow: none;
+            padding-bottom: 30px;
+            margin-top: 1px;
+            margin-bottom: 1px;
+        }
+
+        .remove-bottom-border {
+            .card {
+                padding-bottom: 0px !important;
+            }
+        }
+    }
+
+    .tab-content > div > div[dusk$="-index-component"] > h1 {
+        display: none;
+        margin-top: 32px !important;
+    }
+
+    .tab {
+        padding-top: 1.25rem;
+        padding-bottom: 1.25rem;
+    }
+
+    .default-search > div > .relative > .flex {
+        justify-content: flex-end;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+        margin-top: 0.75rem;
+        margin-bottom: 0.75rem;
+
+        > .mb-6 {
+            margin-bottom: 0;
+        }
+    }
+
+    div > .relative > .card {
+        padding-bottom: 30px !important;
+    }
+
+    .default-search > div > .relative > .card > .flex {
+        padding-top: 0;
+    }
+
+    .default-search > div > .relative {
+        margin-top: 32px !important;
+    }
+
+    .tab-content > div > .relative > .flex {
+        justify-content: flex-end;
+        padding-left: 0.75rem;
+        padding-right: 0.75rem;
+        position: absolute;
+        top: 0;
+        right: 0;
+        transform: translateY(-100%);
+        align-items: center;
+        height: 62px;
+        z-index: 1;
+
+        > .w-full {
+            width: auto;
+            margin-left: 1.5rem;
+        }
+
+        .mb-6 {
+            margin-bottom: 0;
+        }
+    }
+}
+</style>
