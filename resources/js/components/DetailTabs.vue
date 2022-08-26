@@ -171,6 +171,7 @@ export default {
             box-shadow: none;
             padding-bottom: 30px;
             margin-top: 1px;
+            margin-bottom: 1px;
         }
 
         .remove-bottom-border {
